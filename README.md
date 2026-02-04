@@ -11,7 +11,7 @@ This combined plugin replaces the previous F4SE_HTTP, TopicInfoPatcher, and Mant
     https://github.com/peteben/TopicInfoPatcher
 
 Credits:
-[Leidtier](https://github.com/Leidtier)
+[Leidtier](https://github.com/Leidtier) Original author of F4SE_HTTP, MantellaLauncher
 
 
 Uses https://github.com/alandtse/CommonLibF4 Many thanks!
