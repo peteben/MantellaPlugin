@@ -1,0 +1,20 @@
+{
+    "name": "f4testpluginog",
+    "version-semver": "0.1.0",
+    "dependencies": [
+        "args",
+        "boost-nowide",
+        "boost-stacktrace",
+        "boost-stl-interfaces",
+        "fmt",
+        "frozen",
+        "nowide",
+        "rapidcsv",
+        "rsm-binary-io",
+        "srell",
+        "rsm-mmio",
+        "xbyak",
+        "spdlog"
+    ]
+}
+

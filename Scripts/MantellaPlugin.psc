@@ -1,0 +1,84 @@
+Scriptname MantellaPlugin extends ScriptObject Native
+
+int Function PatchTopicInfo (Topic tpTopic, string text) Native Global
+
+Function ClearCache() Native Global
+
+Function SetOverrideFileName(Topic TPInfo, string name) Native Global
+
+string Function StringRemoveWhiteSpace(string text) native Global
+
+; filetype = 3 PNG 
+; filetype = 2 TGA
+
+Function TakeScreenShot(string filename, int filetype, int sstype = 1) native global
+bool Function isMenuModeActive() native global
+
+; Functions to save and restore GameSettings
+
+bool Function saveFloat(string key) native global
+bool Function saveInt(string key) native global
+bool Function restoreFloat(string key) native global
+bool Function restoreInt(string key) native global
+
+; returning Actor values from plugins is problematic at this time
+; Either some Actors return as none, or will cause the game to CTD.
+; As a workaround we just return the coords for the crosshair actor
+; And then we just use Game.FindClosestActor() to get the Actor
+
+Float [] Function GetLastActorCoords() native global
+
+;HTTP functions
+
+function sendLocalhostHttpRequest(int typedDictionaryHandle, int port, string route, int timeout = 0) global native
+
+event OnHttpReplyReceived(int typedDictionaryHandle) native
+event OnHttpErrorReceived(int typedDictionaryHandle) native
+
+; Dictionary
+
+Int function createDictionary() global native
+function clearAllDictionaries() global native
+
+;/  Returns the value associated with the @key. If not, returns @default value
+/;
+String function getString(Int object, String key, String default="") global native
+Int function getInt(Int object, String key, Int default=0) global native
+Float function getFloat(Int object, String key, Float default=0.0) global native
+Bool function getBool(Int object, String key, Bool default=false) global native
+Int function getNestedDictionary(Int object, String key, Int default=0) global native
+Int[] function getIntArray(Int object, String key) global native
+Float[] function getFloatArray(Int object, String key) global native
+String[] function getStringArray(Int object, String key) global native
+Bool[] function getBoolArray(Int object, String key) global native
+Int[] function getNestedDictionariesArray(Int object, String key) global native
+
+;/  Inserts @key: @value pair. Replaces existing pair with the same @key
+/;
+bool function setString(Int object, String key, String value) global native
+function setInt(Int object, String key, Int value) global native
+function setFloat(Int object, String key, Float value) global native
+function setBool(Int object, String key, Bool value) global native
+function setNestedDictionary(Int object, String key, Int value) global native
+function setIntArray(Int object, String key, Int[] value) global native
+function setFloatArray(Int object, String key, Float[] value) global native
+bool function setStringArray(Int object, String key, String[] value) global native
+function setBoolArray(Int object, String key, Bool[] value) global native
+function setNestedDictionariesArray(Int object, String key, Int[] value) global native
+
+int function GetHandle() global native
+function RegisterForHttpEvent(var obj) global native
+
+function SendMantellaEvent(string eventName, Actor act, string stuff, int zig) global native
+
+;/  Returns true, if the container has @key: value pair
+/;
+Bool function hasKey(Int object, String key) global native
+;function RegisterForHttpEvent(ScriptObject derp) global native
+
+;/  Returns type of the value associated with the @key.
+    0 - no value, 1 - none, 2 - int, 3 - float, 4 - form, 5 - object, 6 - string
+/;
+;Int function valueType(Int object, String key) global native
+
+
