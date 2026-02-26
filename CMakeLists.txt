@@ -22,7 +22,6 @@ option(BUILD_STATIC_LIBS ON)
 
 set(SOURCES
         src/plugin.cpp
-        src/hooks.cpp
         src/TypedDictionary.cpp
         src/HTTP.cpp
         src/Mantella_TypedDictionary.cpp

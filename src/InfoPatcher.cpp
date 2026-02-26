@@ -63,7 +63,7 @@ bool restoreInt(std::monostate, std::string key) {
 	}
 
 extern void RegisterCrosshair();
-extern std::vector<RE::Actor*> GetLastCrossHairActor(std::monostate);
+extern RE::TESFormID GetLastCrossHairActorID(std::monostate);
 extern std::vector<float> GetLastActorCoords(std::monostate);
 
 
@@ -112,18 +112,24 @@ int PatchTopicInfo(std::monostate, RE::TESTopic* topic, std::string new_text) {
 		RE::TESResponse* response = resp_list.head;
 
 		char* resp_text = (char*)response->responseText.c_str();	// Existing response text
+		//char resp_short[12];
+		//strncpy_s(resp_short, resp_text, 11);
 
-		logger::info("Topic {:X} TopicInfo {:X} Text: {}", topic->formID, tpInfo->formID, new_text);
+		//logger::info("Topic {:X} TopicInfo {:X} ", topic->formID, tpInfo->formID);
+		//logger::info("Resp: {} [{}] Text: {}", resp_short, strlen(resp_text), new_text);
+
 		//logger::info("Response Text {}", resp_text);
 
 		if (new_text.length() > 450) {
 			ret = -2;
 			logger::warn("Replacement too long! ({:d}", new_text.length());
 			}
-		else if (strcmp(resp_text, orgText) != 0 && (lastText[0] == '\0' || strcmp(resp_text, lastText) != 0)) {
-			ret = -3;
-			logger::warn("TopicInfo string in memeory does not match last usage!");
-			}
+		//else if (strcmp(resp_text+1, orgText) != 0 && (lastText[0] == '\0' || strcmp(resp_text, lastText) != 0)) {
+		//	ret = -3;
+		//	logger::warn("TopicInfo string in memeory does not match last usage!");
+		//	logger::info("Topic: {}", resp_text);
+		//	logger::info("Last : {}", lastText);
+		//	}
 		else {
 			memset(resp_text, 0, 451);					// Fill w/0
 			strcpy_s(resp_text, 450, new_text.data());	// Copy new text for subtittles
@@ -141,15 +147,31 @@ int PatchTopicInfo(std::monostate, RE::TESTopic* topic, std::string new_text) {
 // Mainly for Mantella actions
 void sendMantellaEvent(std::monostate,
 	std::string a_eventName,				// The name of the event being dispatched
-	RE::Actor* lastNPCtoSpeak,				// Actor target of the action
+	RE::Actor* target,						// Actor target of the action
 	std::string stuff,						// Future use
 	int handle) {							// JSON handle for action params
+
+	const char* name;
+	int targetID;
+	if (target == nullptr) {
+		name = "";
+		targetID = 0;
+		}
+	else {
+		name = target->GetDisplayFullName();
+		targetID = target->GetFormID();
+		}
+
 	logger::info("SendMantellaEvent {} {} {} {}",
 		a_eventName,
-		lastNPCtoSpeak->GetDisplayFullName(),
+		name,
 		stuff,
 		handle);
-	Papyrus::detail::SendPapyrusExternalEvent(a_eventName, lastNPCtoSpeak, stuff, handle); 
+
+	//Papyrus::detail::SendPapyrusExternalEvent(a_eventName, target, stuff, handle);
+	// Passing Actor references doesn't always work,
+	// So pass refID instead.
+	Papyrus::detail::SendPapyrusExternalEvent(a_eventName, targetID, stuff, handle);
 	}
 
 void ClearCacheInternal(RE::BSAudioManager*) {									// Doesn't seem to do anything?
@@ -162,6 +184,12 @@ void ClearCacheInternal(RE::BSAudioManager*) {									// Doesn't seem to do any
 
 void ClearCache(std::monostate) {
 	ClearCacheInternal(nullptr);
+	}
+
+void UncacheAll() {
+	using func_t = decltype(UncacheAll);
+	static REL::Relocation<func_t> func{ REL::ID(40925) };
+	func();
 	}
 
 // Override the file name used for wav and lip files
@@ -177,6 +205,8 @@ void SetOverrideFileName_internal(RE::TESTopicInfo* Info, char* name, uint64_t, 
 
 void SetOverrideFileName(std::monostate, RE::TESTopic* this_p, std::string name) {
 	RE::TESTopicInfo* tpInfo = this_p->topicInfos[0];
+
+	UncacheAll();
 
 	if (name != "00001ED2") {
 		CopyFuz(name);
@@ -202,6 +232,20 @@ std::string StringRemoveWhiteSpace(std::monostate, std::string str) {
 	return std::string(start, end + 1);
 	}
 
+std::vector<std::string> split_string(std::monostate, std::string text, int width) {
+	std::vector<std::string> ret;
+	while (text.size() > width) {
+		int end = text.rfind(' ', width);
+		ret.push_back(text.substr(0, end));
+		logger::info("Text: {}", text.substr(0, end));
+		text = text.substr(end + 1);
+		}
+	logger::info("Text: {}", text);
+	ret.push_back(text);
+	return ret;
+	}
+
+
 void TakeScreenShot_internal(char* filename, int filetype, int sstype) {
 	using func_t = decltype(TakeScreenShot_internal);
 	static REL::Relocation<func_t> func{ REL::RelocationID(919230, 2229158) };
@@ -225,11 +269,12 @@ bool RegisterInfoPatcherFunctions(std::string moduleName, RE::BSScript::IVirtual
 	a_VM->BindNativeMethod(moduleName, "saveInt", saveInt, true);
 	a_VM->BindNativeMethod(moduleName, "restoreFloat", restoreFloat, true);
 	a_VM->BindNativeMethod(moduleName, "restoreInt", restoreInt, true);
-	//a_VM->BindNativeMethod(moduleName, "GetLastCrossHairActor", GetLastCrossHairActor, true);
+	a_VM->BindNativeMethod(moduleName, "GetLastCrossHairActorID", GetLastCrossHairActorID, true);
 	a_VM->BindNativeMethod(moduleName, "GetLastActorCoords", GetLastActorCoords, true);
 	//a_VM->BindNativeMethod(moduleName, "GetLastCrossHairRef", GetLastCrosshairRef, true);
 	//a_VM->BindNativeMethod(moduleName, "GetActorName", GetActorName, true);
 	a_VM->BindNativeMethod(moduleName, "SendMantellaEvent", sendMantellaEvent, true);
+	a_VM->BindNativeMethod(moduleName, "split_string", split_string, false);
 
 	return true;
 	}

@@ -112,7 +112,7 @@ int sendHttpRequestResultToGameEvent(std::string completeReply, std::string even
         json reply = json::parse(completeReply);
         int handle = generateDictionaryFromJson(reply);
 
-        logger::info("{}: [{:d}] {}", eventName, handle, getString(handle, "mantella_reply_type", "none"));
+        //logger::info("{}: [{:d}] {}", eventName, handle, getString(handle, "mantella_reply_type", "none"));
         Papyrus::detail::SendPapyrusExternalEvent(eventName, handle);
 
         return 0;
@@ -129,6 +129,7 @@ void postCallbackMethod(cpr::Response response) {
         }
     else {
         json jsonToUse;
+        logger::info("Error {}: {} ", response.status_code, response.error.message);
         jsonToUse["F4SE_HTTP_error"] = response.error.message;
         std::string HttpErrorReceived = "HttpErrorReceived";
         sendHttpRequestResultToGameEvent(jsonToUse.dump(), HttpErrorReceived);
@@ -144,32 +145,34 @@ void sendLocalhostHttpRequest(std::monostate,
         std::string textToSend = newJson.dump();
         std::string req_type = getString(typedDictionaryHandle, "mantella_request_type", "none");
 
-        logger::info("SEND: {}", req_type);
-        if (req_type == "mantella_start_conversation") {            // Experimental feature, turn radio off
-            auto* vm = RE::GameVM::GetSingleton()->GetVM().get();   // During conversation
+        //logger::info("SEND: {} --> {}", req_type, port);
 
-            Papyrus::detail::DispatchStaticCall(
-                vm,
-                "Game",
-                "TurnPlayerRadioOn",
-                nullptr,
-                false);
-            RE::SendHUDMessage::ShowHUDMessage("Radio OFF", "", false, false);
-            }
-        else if (req_type == "mantella_end_conversation") {
-            auto* vm = RE::GameVM::GetSingleton()->GetVM().get(); 
+        //if (req_type == "mantella_start_conversation") {            // Experimental feature, turn radio off
+        //    auto* vm = RE::GameVM::GetSingleton()->GetVM().get();   // During conversation
 
-            Papyrus::detail::DispatchStaticCall(
-                vm,
-                "Game",
-                "TurnPlayerRadioOn",
-                nullptr,
-                true);
-            RE::SendHUDMessage::ShowHUDMessage("Radio ON", "", false, false);
-            }
+        //    Papyrus::detail::DispatchStaticCall(
+        //        vm,
+        //        "Game",
+        //        "TurnPlayerRadioOn",
+        //        nullptr,
+        //        false);
+        //    RE::SendHUDMessage::ShowHUDMessage("Radio OFF", "", false, false);
+        //    }
+        //else if (req_type == "mantella_end_conversation") {
+        //    auto* vm = RE::GameVM::GetSingleton()->GetVM().get(); 
+
+        //    Papyrus::detail::DispatchStaticCall(
+        //        vm,
+        //        "Game",
+        //        "TurnPlayerRadioOn",
+        //        nullptr,
+        //        true);
+        //    RE::SendHUDMessage::ShowHUDMessage("Radio ON", "", false, false);
+        //    }
 
         std::string url = "http://localhost:" + std::to_string(port) + "/" + route;
-        cpr::PostCallback(postCallbackMethod,
+        //logger::info("Http send: {} : {}", url, textToSend);
+            cpr::PostCallback(postCallbackMethod,
             cpr::Url{ url },
             cpr::ConnectTimeout{ timeout },
             cpr::Authentication{ "user", "pass", cpr::AuthMode::BASIC },

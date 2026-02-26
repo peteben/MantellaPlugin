@@ -1,6 +1,5 @@
 .idea
 .vs
 .vscode/settings.json
-src/hooks.cpp
 build
 cmake-build*

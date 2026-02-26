@@ -92,7 +92,9 @@ std::vector<float> GetLastActorCoords(std::monostate) {
 		float Y = lastActor->GetPositionY();
 		float Z = lastActor->GetPositionZ();
 
-		logger::info("GetLastCrosshairActor {} X:{:f} Y:{:f} Z:{:f}", lastActor->GetDisplayFullName(), X,Y, Z);
+		logger::info("GetLastCrosshairActor[{:X}] {} X:{:f} Y:{:f} Z:{:f}", 
+			lastActor->GetFormID(),
+			lastActor->GetDisplayFullName(), X,Y, Z);
 		
 		result.push_back(X);
 		result.push_back(Y);
@@ -101,13 +103,11 @@ std::vector<float> GetLastActorCoords(std::monostate) {
 	return result;
 	}
 
-//std::vector<RE::Actor*> GetLastCrossHairActor(std::monostate) {
-//	std::vector<RE::Actor*> result;
-//
-//	if (lastActor) {
-//		logger::info("GetLastCrosshairActor {}", lastActor->GetDisplayFullName());
-//		result.push_back(lastActor);
-//		}
-//	logger::info("Returning from GetLastCrossHairActor");
-//	return result;
-//	}
+RE::TESFormID GetLastCrossHairActorID(std::monostate) {
+	logger::info("GetLastActorCrosshair ");
+	if (lastActor) {
+		logger::info("GetLastCrosshairActor {}", lastActor->GetDisplayFullName());
+		return lastActor->GetFormID();
+		}
+	return 0;
+	}
