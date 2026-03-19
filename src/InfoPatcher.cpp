@@ -83,13 +83,6 @@ bool isMenuModeActive(std::monostate) {
 		|| pUI->GetMenuOpen("SimpleTextField");
 	}
 
-// This is the placeholder string we expect to find in memory before overwriting
-static char orgText[] = "Mantella01Mantella02Mantella03Mantella04Mantella05Mantella06Mantella07Mantella08Mantella09Mantella10Mantella11Mantella12Mantella13Mantella14Mantella15"
-						"Mantella01Mantella02Mantella03Mantella04Mantella05Mantella06Mantella07Mantella08Mantella09Mantella10Mantella11Mantella12Mantella13Mantella14Mantella15"
-						"Mantella01Mantella02Mantella03Mantella04Mantella05Mantella06Mantella07Mantella08Mantella09Mantella10Mantella11Mantella12Mantella13Mantella14Mantella15";
-// Store last text written
-static char lastText[512];
-
 void CopyFuz(std::string fname) {							// Copy the generated FUZ file to the requested name
 	char exe_path[_MAX_PATH];
 
@@ -112,28 +105,14 @@ int PatchTopicInfo(std::monostate, RE::TESTopic* topic, std::string new_text) {
 		RE::TESResponse* response = resp_list.head;
 
 		char* resp_text = (char*)response->responseText.c_str();	// Existing response text
-		//char resp_short[12];
-		//strncpy_s(resp_short, resp_text, 11);
-
-		//logger::info("Topic {:X} TopicInfo {:X} ", topic->formID, tpInfo->formID);
-		//logger::info("Resp: {} [{}] Text: {}", resp_short, strlen(resp_text), new_text);
-
-		//logger::info("Response Text {}", resp_text);
 
 		if (new_text.length() > 450) {
 			ret = -2;
 			logger::warn("Replacement too long! ({:d}", new_text.length());
 			}
-		//else if (strcmp(resp_text+1, orgText) != 0 && (lastText[0] == '\0' || strcmp(resp_text, lastText) != 0)) {
-		//	ret = -3;
-		//	logger::warn("TopicInfo string in memeory does not match last usage!");
-		//	logger::info("Topic: {}", resp_text);
-		//	logger::info("Last : {}", lastText);
-		//	}
 		else {
 			memset(resp_text, 0, 451);					// Fill w/0
 			strcpy_s(resp_text, 450, new_text.data());	// Copy new text for subtittles
-			strcpy_s(lastText, resp_text);				// Save the last string
 			}
 
 		if (ret != 0) {
