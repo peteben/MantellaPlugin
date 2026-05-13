@@ -8,6 +8,9 @@ extern void RegisterCrosshair();
 extern bool RegisterInfoPatcherFunctions(std::string moduleName, RE::BSScript::IVirtualMachine* a_VM);
 extern bool RegisterHTTPFunctions(std::string moduleName, RE::BSScript::IVirtualMachine* a_VM);
 extern bool RegisterLauncherFunctions(std::string moduleName, RE::BSScript::IVirtualMachine* a_vm);
+extern void OnGameDataReadyVanilla();
+extern void OnPostLoadGameVanilla();
+
 
 void init_log() {
     std::optional<std::filesystem::path> logpath = logger::log_directory();
@@ -22,7 +25,7 @@ void init_log() {
     log->flush_on(spdlog::level::trace);
 
     spdlog::set_default_logger(std::move(log));
-    spdlog::set_pattern("[%T.%e] [%=5t] [%L] %v"s);
+    spdlog::set_pattern("[%T.%e] [%L] %v"s);
     }
 
 void MessageHandler(F4SE::MessagingInterface::Message* a_msg) {
@@ -31,14 +34,15 @@ void MessageHandler(F4SE::MessagingInterface::Message* a_msg) {
         }
 
     switch (a_msg->type) {
-
         case F4SE::MessagingInterface::kGameDataReady:
-        {
-        logger::info("GameDataReady");
-        initSettings();
-        }
-        break;
+            logger::info("GameDataReady");
+            initSettings();
+            OnGameDataReadyVanilla();
+			initDetours();
+            break;
         case F4SE::MessagingInterface::kPostLoadGame:
+            OnPostLoadGameVanilla();
+            break;
         case F4SE::MessagingInterface::kNewGame:
             if (!REL::Module::IsVR()) {
                 RegisterCrosshair();
@@ -54,8 +58,7 @@ bool Bind(RE::BSScript::IVirtualMachine* vm) {
     RegisterInfoPatcherFunctions(className, vm);
     RegisterHTTPFunctions(className, vm);
     RegisterLauncherFunctions(className, vm);
-
-     return true;
+    return true;
 };
 
 extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Query(const F4SE::QueryInterface* a_f4se, F4SE::PluginInfo* a_info) {

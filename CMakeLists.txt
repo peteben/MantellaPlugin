@@ -29,6 +29,9 @@ set(SOURCES
         src/InfoPatcher.cpp
         src/crosshair.cpp
         src/launcher.cpp
+        src/VanillaDialogue.cpp
+        src/Hooks.cpp
+        src/detourxs/detourxs.cpp
         )
 
 source_group(
@@ -45,6 +48,9 @@ FetchContent_MakeAvailable(json)
 
 find_package(fmt REQUIRED CONFIG)
 find_package(spdlog REQUIRED CONFIG)
+find_path(DETOURS_INCLUDE_DIRS "detours/detours.h")
+find_library(DETOURS_LIBRARY detours REQUIRED)
+
 
 # If you're not using a mod manager, you probably want the SKSE plugin to go
 # inside of your Skyrim "Data" folder.
@@ -89,6 +95,7 @@ target_include_directories(${PROJECT_NAME}
         PRIVATE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/src>
+        ${DETOURS_INCLUDE_DIRS}
         $<INSTALL_INTERFACE:src>)
 
 target_include_directories(${PROJECT_NAME}
@@ -105,6 +112,7 @@ target_link_libraries(${PROJECT_NAME}
 
 target_link_libraries(${PROJECT_NAME} 
         PRIVATE
+        ${DETOURS_LIBRARY}
         nlohmann_json::nlohmann_json)
 
 include(cmake/addCommonLibF4NG.cmake)

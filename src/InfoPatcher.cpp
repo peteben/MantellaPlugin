@@ -122,6 +122,13 @@ int PatchTopicInfo(std::monostate, RE::TESTopic* topic, std::string new_text) {
 	return ret;
 	}
 
+extern void VanillaProcessMantellaEvent(
+	std::string a_eventName,				// The name of the event being dispatched
+	RE::Actor* target,						// Actor target of the action
+	std::string stuff,						// Future use
+	int handle);							// JSON handle for action params
+
+
 // Calls functions registered with 'RegisterForExternalEvent'
 // Mainly for Mantella actions
 void sendMantellaEvent(std::monostate,
@@ -146,6 +153,8 @@ void sendMantellaEvent(std::monostate,
 		name,
 		stuff,
 		handle);
+
+	VanillaProcessMantellaEvent(a_eventName, target, stuff, handle);	// Send events to vanilla dialogue handler.
 
 	//Papyrus::detail::SendPapyrusExternalEvent(a_eventName, target, stuff, handle);
 	// Passing Actor references doesn't always work,
