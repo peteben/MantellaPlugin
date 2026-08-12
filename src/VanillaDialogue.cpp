@@ -1,4 +1,8 @@
+#include <chrono>   // For std::chrono
 #include <cstdint>  // For fixed-width integer types
+#include <ctime>    // For std::strftime
+#include <filesystem> // For std::filesystem
+#include <fstream>  // For std::ofstream
 #include <map>      // For std::map
 #include <set>      // For std::set
 #include <string>   // For std::string
@@ -9,6 +13,8 @@
 #include "PCH.h"
 #include <nlohmann\json.hpp>  // Include nlohmann/json library
 #include "DetourXS/detourxs.h"
+#include <KnownFolders.h>
+#include <ShlObj.h>
 
 extern void initDetours();
 
@@ -182,7 +188,22 @@ class SubtitleManager;
 	}
 
 
+#ifdef _F4AE
+#define LOG_debug(...) REX::DEBUG(__VA_ARGS__)
+#define LOG_info(...) REX::INFO(__VA_ARGS__)
+#define LOG_warn(...) REX::WARN(__VA_ARGS__)
+#define LOG_error(...) REX::ERROR(__VA_ARGS__)
+#else
+#define LOG_debug(...) logger::debug(__VA_ARGS__)
+#define LOG_info(...) logger::info(__VA_ARGS__)
+#define LOG_warn(...) logger::warn(__VA_ARGS__)
+#define LOG_error(...) logger::error(__VA_ARGS__)
+#endif
+
+
 namespace Hooks {
+
+static inline std::string dialogueEventsBuffer;
 
 	// -------------------------------------------------------------------------
 	// A small POD struct to store a single exchange: line spoken, actor name
@@ -231,23 +252,26 @@ namespace Hooks {
 
 		// Key = actor form ID, value = list of dialogue lines not yet added to Mantella
 		static inline std::map<RE::TESFormID, std::vector<DialogueLine>> s_dialogueHistory{};
-		static inline std::vector<DialogueLine> s_preCache{};
 		static inline float lastCapturedGameTimeHours = 0.0f; // To track the game time of the last captured line
 
-		static inline bool playerSeen = false;
-		static inline bool NPCseen = false;
-		static inline std::set<RE::TESFormID> actorsInConversation{};
+		struct QuestPreCache {
+			std::vector<DialogueLine> lines;
+			bool playerSeen = false;
+			bool NPCseen = false;
+			std::set<RE::TESFormID> actorsInConversation;
+			};
+		static inline std::map<std::string, QuestPreCache> s_preCacheByQuest{};
 
 		static void Setup() {
 			auto dataHandler = RE::TESDataHandler::GetSingleton();
 			if (!dataHandler) {
-				logger::error("!!! MantellaDialogueTracker::Setup: TESDataHandler is null!");
+				LOG_error("!!! MantellaDialogueTracker::Setup: TESDataHandler is null!");
 				DialogueTrackerHasError = true;
 				return;
 				}
 			aParticipants = dataHandler->LookupForm<RE::BGSListForm>(0x04C57, "Mantella.esp");
 			if (!aParticipants) {
-				logger::error("!!! MantellaDialogueTracker::Setup: aParticipants is null!");
+				LOG_error("!!! MantellaDialogueTracker::Setup: aParticipants is null!");
 				DialogueTrackerHasError = true;
 				return;
 				}
@@ -267,7 +291,7 @@ namespace Hooks {
 		// ---------------------------------------------------------------------
 		// Helper: checks if a given actor is listed in the current participants form list.
 		// ---------------------------------------------------------------------
-		static bool IsActorInConversation(RE::Actor* a_actor) {
+		static bool IsActorInConversation(RE::TESObjectREFR* a_actor) {
 			if (!a_actor || !aParticipants || DialogueTrackerHasError) return false;
 			auto formID = a_actor->GetFormID();
 			auto scriptAddedForms = aParticipants->scriptAddedTempForms;
@@ -281,6 +305,14 @@ namespace Hooks {
 		// Called when a conversation starts.
 		// ---------------------------------------------------------------------
 		static void OnConversationStarted() {
+			std::string buf;
+			for (auto actorID : *aParticipants->scriptAddedTempForms) {
+				RE::Actor* actor = RE::TESForm::GetFormByID<RE::Actor>(actorID);
+				buf += (actor == nullptr) ? "<null>" : actor->GetDisplayFullName();
+				buf += " ";
+				}
+			LOG_info("vanilla dialogue awareness is : {}", IsEnabled() ? "ON" : "OFF");
+			LOG_info("Conversation started with participants: {}", buf);
 			}
 
 		// Sends the dialogue that was captured when not in a conversation to Mantella and removes it from the backlog
@@ -315,12 +347,17 @@ namespace Hooks {
 			// If we found lines for the current actor and the player, send them to Mantella
 			if (foundActor) {
 				if (foundPlayer) {
-					logger::debug("{} had {} captured lines. Sent it to mantella", actorName, lineCount);
+					LOG_debug("{} had {} captured lines. Stored it in dialogueEventsBuffer", actorName, lineCount);
 					// Remove the trailing space, if any
 					if (!concatenatedLines.empty() && concatenatedLines.back() == ' ') concatenatedLines.pop_back();
 					// Send a single Mantella event with the concatenated lines
-					if (!concatenatedLines.empty()) MantellaPapyrusInterface::AddMantellaEvent(concatenatedLines.c_str());
+					if (!concatenatedLines.empty()) {
+
+						//MantellaPapyrusInterface::AddMantellaEvent(concatenatedLines.c_str());
+						dialogueEventsBuffer.append(concatenatedLines);
+						}
 					}
+
 				s_dialogueHistory.erase(NPCFormID); // Remove the conversation from history after sending
 				}
 			}
@@ -330,7 +367,14 @@ namespace Hooks {
 		// ---------------------------------------------------------------------
 		static void OnNewParticipant(RE::Actor* a_newActor) {
 			if (!a_newActor || DialogueTrackerHasError) return;
-			 SendAndDiscardCapturedDialogue(a_newActor);
+			std::string buf;
+			for (auto actorID : *aParticipants->scriptAddedTempForms) {
+				RE::Actor* actor = RE::TESForm::GetFormByID<RE::Actor>(actorID);
+				buf += (actor == nullptr) ? "<null>" : actor->GetDisplayFullName();
+				buf += " ";
+				}
+			LOG_info("{} added to conversation: {}", a_newActor->GetDisplayFullName(), buf);
+			SendAndDiscardCapturedDialogue(a_newActor);
 			}
 		};
 
@@ -357,6 +401,28 @@ namespace Hooks {
 			 qtDLC07
 			};
 
+	// Convert QuestType to string (for debugging)
+	[[nodiscard]] const char* QuestTypeToString(uint8_t a_questType) noexcept {
+		switch (a_questType) {
+			case qtNone:                return "None";
+			case qtMainQuest:           return "MainQuest";
+			case qtBrotherhoodOfSteel:  return "BrotherhoodOfSteel";
+			case qtInstitute:           return "Institute";
+			case qtMinutemen:           return "Minutemen";
+			case qtRailroad:            return "Railroad";
+			case qtMiscellaneous:       return "Miscellaneous";
+			case qtSideQuests:          return "SideQuests";
+			case qtDLC01:               return "DLC01";
+			case qtDLC02:               return "DLC02";
+			case qtDLC03:               return "DLC03";
+			case qtDLC04:               return "DLC04";
+			case qtDLC05:               return "DLC05";
+			case qtDLC06:               return "DLC06";
+			case qtDLC07:               return "DLC07";
+			default:                    return "UnknownQuestType";
+			}
+		}
+
 	// -------------------------------------------------------------------------
 	// ShowSubtitle hook:
 	// -------------------------------------------------------------------------
@@ -370,8 +436,93 @@ namespace Hooks {
 			}
 
 		static void AddDialogueExchangeAsync(const DialogueLine& exchange) {
-			MantellaPapyrusInterface::AddMantellaEvent(exchange.Name + ": " + exchange.Line);
+			dialogueEventsBuffer += exchange.Name + ": " + exchange.Line + ";\n";
+
+			//MantellaPapyrusInterface::AddMantellaEvent(exchange.Name + ": " + exchange.Line);
 		}
+
+		// ---------------------------------------------------------------------
+		// Appends a single row to DialogueFilter.csv in the F4SE logging folder.
+		// Each line is prefixed with '*' if the dialogue was filtered out
+		// (ShouldFilterDialogue returned true), or '-' otherwise.
+		// Call InitDialogueFilterCsv() on game start / save load to open a new file.
+		// ---------------------------------------------------------------------
+		static inline std::filesystem::path s_csvPath{};
+
+		static void InitDialogueFilterCsv() {
+			wchar_t* knownBuffer{ nullptr };
+			const auto knownResult = SHGetKnownFolderPath(FOLDERID_Documents, KF_FLAG_DEFAULT, nullptr, std::addressof(knownBuffer));
+			std::unique_ptr<wchar_t[], decltype(&CoTaskMemFree)> knownPath(knownBuffer, CoTaskMemFree);
+			if (!knownPath || knownResult != 0) {
+				LOG_error("failed to get known folder path");
+				return;
+				}
+
+			std::filesystem::path path = knownPath.get();
+			path /= "My Games/Fallout4/F4SE/";
+
+
+			auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+			std::tm tm{};
+#if defined(_WIN32)
+			localtime_s(&tm, &now);
+#else
+			localtime_r(&now, &tm);
+#endif
+			char timestamp[32];
+			std::strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", &tm);
+
+			s_csvPath = path / (std::string("DialogueFilter_") + timestamp + ".csv");
+			s_csvPath.make_preferred();
+
+			std::ofstream csv;
+			csv.open(s_csvPath, std::ios::out | std::ios::trunc);
+
+			if (!csv.is_open()) {
+				std::error_code err;
+				LOG_error("DialogueFilter: {} : failed to create {}", err.message(),  s_csvPath.string());
+				s_csvPath.clear();
+				return;
+				}
+			csv << "Prefix,QuestName,QuestType,DialogueType,DialogueSubtype,speaker, target, Line\n";
+			LOG_info("DialogueFilter: logging to {}", s_csvPath.string());
+
+			// Rotate: keep only the 5 most recent DialogueFilter_*.csv files.
+			constexpr int kMaxFiles = 5;
+			std::vector<std::filesystem::path> existing;
+			for (const auto& entry : std::filesystem::directory_iterator(path)) {
+				auto& p = entry.path();
+				if (p.extension() == ".csv" && p.filename().string().starts_with("DialogueFilter_"))
+					existing.push_back(p);
+				}
+			std::sort(existing.begin(), existing.end()); // lexicographic = chronological for YYYYMMDD_HHMMSS names
+			while (static_cast<int>(existing.size()) > kMaxFiles) {
+				std::error_code ec;
+				std::filesystem::remove(existing.front(), ec);
+				if (ec)
+					LOG_warn("DialogueFilter: failed to delete old log {}: {}", existing.front().string(), ec.message());
+				existing.erase(existing.begin());
+				}
+			}
+
+		static void LogDialogueFilterCsv(bool a_filtered, const std::string a_speakerName, const char * a_targetName, const char* a_questName, const char* a_questTypeStr,
+				const char* a_typeStr, const char* a_subtypeStr, const std::string& a_line) {
+			if (s_csvPath.empty()) return;
+			//LOG_info("CSV path {}", s_csvPath.string());
+			std::ofstream csv(s_csvPath, std::ios::out | std::ios::app);
+			if (!csv.is_open()) return;
+			//LOG_info("CSV Log: {} {} {} {} {} {} {}", a_filtered ? '*' : '-', a_speakerName, a_questName, a_questTypeStr, a_typeStr, a_subtypeStr, a_line);
+
+			csv << (!a_filtered ? '*' : '-') << ','
+				<< '"' << a_questName << '"' << ','
+				<< '"' << a_questTypeStr << '"' << ','
+				<< '"' << a_typeStr << '"' << ','
+				<< '"' << a_subtypeStr << '"' << ','
+				<< '"' << a_speakerName << '"' << ','
+				<< '"' << a_targetName << '"' << ','
+				<< '"' << a_line << '"' << '\n';
+			//LOG_info("CSV Log: done");
+			}
 		/*
 			Filter dialogue lines that should be saved and passed to Mantella.
 			Include only:
@@ -381,10 +532,12 @@ namespace Hooks {
 			Also excludes any dialogue generated by Mantella.
 		*/
 
-		static bool ShouldFilterDialogue(std::string line, RE::TESTopicInfo* topicInfo) {
+		static bool ShouldFilterDialogue(RE::TESObjectREFR *speaker, std::string line, RE::TESTopicInfo* topicInfo) {
 			if (HasAlreadyProcessed(line)) return true;
 
-			if (topicInfo == nullptr) return true;
+			if (speaker == nullptr || topicInfo == nullptr) return true;
+			const char* speakerName = speaker->GetDisplayFullName();
+			if (speakerName == nullptr) speakerName = "<unknown>";
 
 			RE::TESTopic* topic = topicInfo->parentTopic;
 			if (topic == nullptr) return true;
@@ -396,85 +549,145 @@ namespace Hooks {
 			RE::DIALOGUE_SUBTYPE subtype = (RE::DIALOGUE_SUBTYPE)topic->data.subtype;
 			uint8_t questtype = quest->data.questType;
 			const char *questName = quest->formEditorID.c_str();
+			const char *typeStr = DialogueTypeToString(type);
+			const char *subtypeStr = DialogueSubtypeToString(subtype);
+			const char *questTypeStr = QuestTypeToString(questtype);
+			RE::Actor* playerRef = RE::PlayerCharacter::GetSingleton();
+			RE::TESObjectREFR* dialogueTarget = nullptr;
+
+			RE::Actor* speakerActor = speaker->As<RE::Actor>();
+			const char* targetName = "<nobody>";
+
+			if (speakerActor != nullptr) {
+				dialogueTarget = speakerActor->dialogueItemTarget.get().get();
+				targetName = dialogueTarget ? dialogueTarget->GetDisplayFullName() : "nobody";
+				}
+			else {
+				LOG_info("Speaker is not an actor");				// Not an actor
+				}
 
 
 			if (type == RE::DIALOGUE_TYPE::kSceneDialogue
-				|| (type == RE::DIALOGUE_TYPE::kMiscellaneous
-				&& subtype == RE::DIALOGUE_SUBTYPE::kMisc_Greeting)) {
-				logger::info("{} {} :{}:{} {}", questName, questtype,
-				    DialogueTypeToString(type), DialogueSubtypeToString(subtype),
-				    line);
-				if (questtype == 0) return true;
+				|| (type == RE::DIALOGUE_TYPE::kMiscellaneous && subtype == RE::DIALOGUE_SUBTYPE::kMisc_Greeting)) {
+				bool isPlayerSpeaking = speaker == playerRef;
 
-				return false;
+				static RE::TESQuest* playerQuest;
+				if (isPlayerSpeaking && playerQuest != quest) {
+					LOG_info("Player quest {}", questName);
+					playerQuest = quest;
+					}
+
+				bool ret = !isPlayerSpeaking && dialogueTarget != playerRef;
+
+				LogDialogueFilterCsv(ret, speakerName, targetName, questName, questTypeStr, typeStr, subtypeStr, line.c_str());
+				return ret;
 				}
 
 			if (type == RE::DIALOGUE_TYPE::kMiscellaneous
 				&& subtype == RE::DIALOGUE_SUBTYPE::kMisc_Player_Action_Stand_On_Furniture) {
 				return true;    // Mantella
 				}
+			LogDialogueFilterCsv(true, speakerName, targetName, questName, questTypeStr, typeStr, subtypeStr, line.c_str());
 			return true;
-		}
+			}
 
 		// The hook function
 		static void SubtitleManagerShowSubtitleHook(
-				SubtitleManager* a_this, RE::Actor* a_speaker, RE::BSFixedStringCS *a_subtitle,
+				SubtitleManager* a_this, RE::TESObjectREFR* a_speaker, RE::BSFixedStringCS *a_subtitle,
 				RE::TESTopicInfo *topicinfo, bool a_alwaysDisplay) {
 
+			static bool s_firstCall = true;
 			using MDT = MantellaDialogueTracker;
 			using func_t = decltype(SubtitleManagerShowSubtitleHook);
 			void* orgCode = SubtitleManagerShowSubtitleDetour.GetTrampoline();
 			func_t* func = (func_t*)orgCode;
 
+			if (s_firstCall) {
+				LOG_info("Subtitle Hook called.");
+				LOG_info("vanilla dialogue awareness is : {}", IsEnabled() ? "ON" : "OFF");
+				s_firstCall = false;
+				}
+
+			//LOG_info("speaker is {:04X}: {:04X} {:p}", a_speaker->formID, (int)a_speaker->FORM_ID, (void *) derp );
+
 			// Call original
 			func(a_this, a_speaker, a_subtitle, topicinfo, a_alwaysDisplay);
 
 			if (topicinfo == nullptr) {
-				logger::info("SubtitleManagerShowSubtitleHook: topicinfo is null");
+				LOG_info("SubtitleManagerShowSubtitleHook: topicinfo is null");
 				return;
 				}
 
 			RE::TESTopic* topic = topicinfo->parentTopic;
 			if (topic == nullptr) {
-				logger::info("SubtitleManagerShowSubtitleHook: topic is null");
+				LOG_info("SubtitleManagerShowSubtitleHook: topic is null");
 				return;
 				}
 
-			if (!IsEnabled() || MDT::DialogueTrackerHasError || a_speaker == nullptr) {
-				//logger::debug(" -> Mantella dialogue awareness is disabled.");
+			if (a_speaker == nullptr) {
+				LOG_info("SubtitleManagerShowSubtitleHook: speaker is null");
+				return;
+				}
+
+			// Query RTTI classname of the speaker for debugging
+			const char* speakerRttiName = "<null>";
+			//try {
+			//	speakerRttiName = typeid(*a_speaker).name();
+			//	}
+			//catch (...) {
+			//	speakerRttiName = "<rtti-error>";
+			//	}
+			
+			RE::TESObjectREFR* speakerActor = a_speaker->As<RE::TESObjectREFR>();
+			if (speakerActor == nullptr) {
+				LOG_info("SubtitleManagerShowSubtitleHook: speaker is not an Actor, RTTI class: {}", speakerRttiName);
+				return;
+				}
+
+			RE::TESFormID speakerFormID = a_speaker->formID;
+
+			if (!IsEnabled() || MDT::DialogueTrackerHasError) {
+				//LOG_debug(" -> Mantella dialogue awareness is disabled.");
 				return;
 				}
 
 
 #if 0
-			RE::DIALOGUE_TYPE topic_type = (RE::DIALOGUE_TYPE)topic->data.type;
-			RE::DIALOGUE_SUBTYPE topic_subtype = (RE::DIALOGUE_SUBTYPE)topic->data.subtype;
-			//const char* caller = nullptr;
-			if (REL::Module::IsF4()) {
-				void* returnAddress = _ReturnAddress();
-				uint32_t offset = (uint32_t)returnAddress & 0xffff;
-				if (offset == 0xe9ad) caller = "VoiceSoundFunction";
-				if (offset == 0xf086) caller = "SayForceGoodbyeGreetingToPlayer";
-				if (offset == 0x2c27) caller = "VoiceSoundFunctionEx";
-				if (offset == 0x3aca) caller = "GetFullLODRef";
-				if (offset == 0x9c81) caller = "UpdateVoiceTimer";
+			if (RE::PlayerCamera::GetSingleton()->QCameraEquals(RE::CameraState::kFree)) {
+				RE::DIALOGUE_TYPE topic_type = (RE::DIALOGUE_TYPE)topic->data.type;
+				RE::DIALOGUE_SUBTYPE topic_subtype = (RE::DIALOGUE_SUBTYPE)topic->data.subtype;
+				const char* caller = nullptr;
 
-				if (caller == nullptr) {
-					logger::info("Unexpected {:p} {} {}", returnAddress,
-						DialogueTypeToString(topic_type), DialogueSubtypeToString(topic_subtype));
-					}
-				else {
-					if (offset != 0x3aca || topic_type != RE::DIALOGUE_TYPE::kMiscellaneous
-						|| topic_subtype != RE::DIALOGUE_SUBTYPE::kMisc_Player_Action_Stand_On_Furniture) {
-						logger::info("{} {}:{}", caller,
+				//const char* caller = nullptr;
+				if (REL::Module::IsF4()) {
+					void* returnAddress = _ReturnAddress();
+					uint32_t offset = (uint32_t)returnAddress & 0xffff;
+					if (offset == 0xe9ad) caller = "VoiceSoundFunction";
+					if (offset == 0xf086) caller = "SayForceGoodbyeGreetingToPlayer";
+					if (offset == 0x2c27) caller = "VoiceSoundFunctionEx";
+					if (offset == 0x3aca) caller = "GetFullLODRef";
+					if (offset == 0x9c81) caller = "UpdateVoiceTimer";
+
+					if (caller == nullptr) {
+						LOG_info("Unexpected {:p} {} {}", returnAddress,
 							DialogueTypeToString(topic_type), DialogueSubtypeToString(topic_subtype));
 						}
+					else {
+						LOG_info("{} [{}] {}: {}", caller, a_alwaysDisplay ? "Force" : "Normal", a_speaker->GetDisplayFullName(), a_subtitle->c_str());
+						//if (offset != 0x3aca || topic_type != RE::DIALOGUE_TYPE::kMiscellaneous
+						//	|| topic_subtype != RE::DIALOGUE_SUBTYPE::kMisc_Player_Action_Stand_On_Furniture) {
+						//	LOG_info("{} {}:{}", caller,
+						//		DialogueTypeToString(topic_type), DialogueSubtypeToString(topic_subtype));
+						//	}
+						}
+					}
+				else {
+					caller = "";
 					}
 				}
-			else {
-				caller = "";
-				}
 #endif
+
+			//LOG_info("Speaker ID {:04X}", speakerFormID);
 
 			// Safe logging: avoid dereferencing pointers that may be null
 			const char* subtitleStr = a_subtitle && a_subtitle->c_str() ? a_subtitle->c_str() : "<null>";
@@ -491,86 +704,86 @@ namespace Hooks {
 			exchange.Name = speakerName;
 			exchange.gameTimeHours = GetCurrentGameTimeHours();
 
-			if (ShouldFilterDialogue(exchange.Line, topicinfo)) return;
+			RE::TESQuest* quest = topic->ownerQuest;
+			if (quest == nullptr) return;
+			const char* questName = quest->formEditorID.c_str();
+
+			if (ShouldFilterDialogue(a_speaker, exchange.Line, topicinfo)) return;
 			bool newConvo = exchange.gameTimeHours - MDT::lastCapturedGameTimeHours > 2.0f;
-			MDT::lastCapturedGameTimeHours = exchange.gameTimeHours; // Update the game time of the last captured line, to keep track of when the next conversation starts
-	
-			// When we get a line of dialogue, it could be irrelevant:
-			// NPC monologue or scene involving only NPCs, or it could be the start of a conversation.
-			// So we save it in the s_preCache buffer and wait until we get lines from both the player and the NPC.
-			// If the current line is more than 2 in-game hours apart from the last captured line, 
-			// we consider it the start of a new conversation and 
-			// either add the contents of the captured lines buffer to the history of the NPC
-			// if we have seen both player and NPC lines,
-			// or discard it if we haven't seen both
+			MDT::lastCapturedGameTimeHours = exchange.gameTimeHours;
 
-
-			logger::info("{}: {}", exchange.Name, exchange.Line);
+			//LOG_info("{}: {}", exchange.Name, exchange.Line);
 
 			if (!conversationRunning) {
-				// Vanilla dialogue is occurring, outside of a Mantella conversation.
-				// Before we store it, we need to validate this converssation involves both the player and one or more NPCs
-				// Until we have seen lines from both the player and an NPC, it goes into the pre-cache instead of the main dialogue history,
-				// to avoid sending irrelevant lines to Mantella. Once we have seen lines from both, we can consider it a conversation and move the relevant lines to the main history.
+				// Vanilla dialogue occurring outside a Mantella conversation.
+				// Each quest has its own pre-cache bucket. A bucket is only promoted to
+				// dialogue history once we have seen both a player line and an NPC line
+				// for that quest; otherwise it is discarded.
 
-				if (MDT::s_preCache.size() > 0) {	// There's something already in the pre-cache
-					// Player and NPC lines captured?
-					// Add captured dialogue to the stored lines for this NPC, to send it to Mantella when the conversation starts
-
-					if (MDT::playerSeen && MDT::NPCseen) {						// Store it, for every NPC encountered.
-						for (auto NPCFormID : MDT::actorsInConversation) {
-							auto& lines = MDT::s_dialogueHistory[NPCFormID];
-							lines.append_range(MDT::s_preCache);
-							logger::info("Flushed {} captured lines to history of NPC {:08X}"
-								,MDT::s_preCache.size(), NPCFormID);
+				if (newConvo) {
+					// Time gap detected — flush all quest buckets.
+					for (auto& [qName, qpc] : MDT::s_preCacheByQuest) {
+						if (qpc.playerSeen && qpc.NPCseen) {
+							for (auto NPCFormID : qpc.actorsInConversation) {
+								auto& lines = MDT::s_dialogueHistory[NPCFormID];
+								lines.append_range(qpc.lines);
+								LOG_info("Flushed {} cached lines from quest '{}' to history of NPC {:08X}",
+									qpc.lines.size(), qName, NPCFormID);
+								}
 							}
-						MDT::s_preCache.clear();    // reset
+						else {
+							LOG_info("Discarding {} cached lines from quest '{}' (no player/NPC pair)",
+								qpc.lines.size(), qName);
+							}
 						}
-					else if (newConvo) {
-						// If anything remains in the pre-cache, it means we haven't seen both player and NPC lines, so discard it.
-						logger::info("discarding {} captured lines, new conversation started", MDT::s_preCache.size());
-						MDT::s_preCache.clear();    // reset
-						}
+					MDT::s_preCacheByQuest.clear();
 					}
 
-				if (newConvo) {		// Getting a new line more than 2 hours from the last captured line, consider it the start of a new conversation
-					MDT::playerSeen = false;
-					MDT::NPCseen = false;
-					MDT::actorsInConversation.clear();
-					}
+				// Route current line into its quest bucket.
+				auto& qpc = MDT::s_preCacheByQuest[questName];
 
-				// Process current line
 				if (isPlayerSpeaking) {
-					MDT::playerSeen = true;
-					s_lastPlayerTopicText = exchange.Line; // Update last player topic text even if not in a conversation, to avoid processing the same line multiple times
+					qpc.playerSeen = true;
+					s_lastPlayerTopicText = exchange.Line;
 					}
 				else {
-					MDT::NPCseen = true;
-					MDT::actorsInConversation.insert(a_speaker->GetFormID());
+					qpc.NPCseen = true;
+					qpc.actorsInConversation.insert(a_speaker->GetFormID());
 					}
 
-				if (MDT::playerSeen && MDT::NPCseen) {
-					for (auto NPCFormID : MDT::actorsInConversation) {
-						if (!MDT::s_dialogueHistory.contains(NPCFormID)) {
-							// If we haven't seen any lines from this NPC yet, initialize an empty conversation for them, to store the player's lines until the conversation starts
-							MDT::s_dialogueHistory[NPCFormID] = {};
+				if (qpc.playerSeen && qpc.NPCseen) {
+					// Flush any buffered lines for this quest now that we have both sides.
+					if (!qpc.lines.empty()) {
+						for (auto NPCFormID : qpc.actorsInConversation) {
+							auto& lines = MDT::s_dialogueHistory[NPCFormID];
+							lines.append_range(qpc.lines);
+							LOG_info("Flushed {} buffered lines from quest '{}' to history of NPC {:08X}",
+								qpc.lines.size(), questName, NPCFormID);
 							}
+						qpc.lines.clear();
+						}
+					for (auto NPCFormID : qpc.actorsInConversation) {
 						MDT::s_dialogueHistory[NPCFormID].push_back(exchange);
 						}
 					}
 				else {
-					MDT::s_preCache.push_back(exchange);
+					qpc.lines.push_back(exchange);
 					}
 				}
 			else {      // Conversation is running
 				 if (actorInConversation) {
 					AddDialogueExchangeAsync(exchange);
-					logger::info("  -> Sent dialogue to Mantella");
+					//LOG_info("  -> Sent dialogue to Mantella");
 					 }
 				 else {
-					 RE::TESFormID NPCFormID = a_speaker->GetFormID();
+					 //if (quest != playerQuest) {
+						// LOG_info("Ignoring Speaker {}: {}", speakerName, exchange.Line);
+						// return;
+						// }
+
+					 RE::TESFormID NPCFormID = a_speaker->formID;
 					 AddDialogueExchangeAsync(exchange);
-					 logger::info("  -> Actor not in conversation, sent dialogue to Mantella anyways");
+					 LOG_info("  -> Actor {} not in conversation, sent dialogue to Mantella anyways", speakerName);
 					 if (!MDT::s_dialogueHistory.contains(NPCFormID)) {
 						 // If we haven't seen any lines from this NPC yet, initialize an empty conversation for them, to store the player's lines until the conversation starts
 						 MDT::s_dialogueHistory[NPCFormID] = {};
@@ -595,34 +808,58 @@ std::string SerializeDialogueHistoryToJSON() {
 	size_t totalDialogueLines = 0;
 	json j;
 
+	float kMaxAgeHours = MantellaPapyrusInterface::GetMantellaDialogueExpiration();
+	kMaxAgeHours = std::max(kMaxAgeHours, 6.0f); // Ensure non-negative
+	kMaxAgeHours = std::min(kMaxAgeHours, 240.0f); // Cap at 10 days
+
+	const float currentGameTimeHours = Hooks::GetCurrentGameTimeHours();
+
 	for (const auto& [formID, dialogueLines] : MDT::s_dialogueHistory) {
 		totalDialogueLines += dialogueLines.size();
 		if (totalDialogueLines > MAX_DIALOGUE_LINES) {
-			// Exceeded threshold: Discard all saved dialogue history, to avoid savegame bloat. The threshold is so high (~6MB of data)
-			// that this should never happen, but just to be safe.
-			logger::warn("!!! Exceeded max dialogue lines threshold: Discarding all saved dialogue history.");
+			LOG_warn("!!! Exceeded max dialogue lines threshold: Discarding all saved dialogue history.");
 			return "{}";
 			}
 		}
 
+	// Drop dialogue lines older than 10 in-game days, to avoid storing lines from a character that you might never talk with.
 	for (const auto& [formID, dialogueLines] : MDT::s_dialogueHistory) {
-		j[std::to_string(formID)] = dialogueLines;
+		std::vector<Hooks::DialogueLine> recentLines;
+		for (const auto& dl : dialogueLines) {
+			if (currentGameTimeHours - dl.gameTimeHours <= kMaxAgeHours) {
+				recentLines.push_back(dl);
+				}
+			else {
+				RE::TESObjectREFR* actor = RE::TESForm::GetFormByID<RE::TESObjectREFR>(formID);
+				std::string formIDstr = std::format("{:04X}", formID);
+				std::string actorName = actor ? actor->GetDisplayFullName() : formIDstr;
+				if (actorName == "Settler") {
+					actorName = std::format("Settler {}", formIDstr);
+					}
+				LOG_debug("Dropping stale dialogue line from {} (age: {:.1f}h > {:.0f}h limit)",
+					actorName, currentGameTimeHours - dl.gameTimeHours, kMaxAgeHours);
+				}
+			}
+		if (!recentLines.empty())
+			j[std::to_string(formID)] = recentLines;
 		}
 
-	// Serialize Dialogue tracker state (preCache, playerSeen, NPCseen and actorsInConversation)
-	j["__DialogueTrackerState"] = {
-		{"preCache", MDT::s_preCache},
-		{"playerSeen", MDT::playerSeen},
-		{"NPCseen", MDT::NPCseen} ,
-		{"actorsInConversation", std::vector<RE::TESFormID>(MDT::actorsInConversation.begin(), MDT::actorsInConversation.end())
+	// Serialize per-quest pre-cache buckets
+	json preCacheJson = json::object();
+	for (const auto& [qName, qpc] : MDT::s_preCacheByQuest) {
+		preCacheJson[qName] = {
+			{"lines", qpc.lines},
+			{"playerSeen", qpc.playerSeen},
+			{"NPCseen", qpc.NPCseen},
+			{"actorsInConversation", std::vector<RE::TESFormID>(qpc.actorsInConversation.begin(), qpc.actorsInConversation.end())}
+			};
 		}
-		};
-		
+	j["__DialogueTrackerState"] = {{"preCacheByQuest", preCacheJson}};
+
 	return j.dump();
 	}
 
-
-bool DeserializeDialogueHistoryFromJSON(const std::string& jsonString) {
+bool DeserializeDialogueHistoryFromJSON(const std::string& jsonString, const F4SE::SerializationInterface* a_intfc) {
 	using MDT = Hooks::MantellaDialogueTracker;
 	try {
 		json j = json::parse(jsonString);
@@ -631,28 +868,49 @@ bool DeserializeDialogueHistoryFromJSON(const std::string& jsonString) {
 		for (auto it = j.begin(); it != j.end(); ++it) {
 			if (it.key() == "__DialogueTrackerState") continue;
 			RE::TESFormID formID = static_cast<RE::TESFormID>(std::stoul(it.key()));
+
+			std::optional<RE::TESFormID> newformID = a_intfc->ResolveFormID(formID);		// Mod index may have changed, so resolve the form ID to the current one
+			if (newformID.has_value() && newformID.value() != formID) {
+				LOG_info("Mod load: remapped form ID {:04X} -> {:04X}", formID, newformID.value());
+				formID = newformID.value();
+				}
+
+			std::string formIDstr = std::format("{:04X}", formID);
+			RE::Actor* form = RE::TESForm::GetFormByID<RE::Actor>(formID);
+			std::string formName = form ? form->GetDisplayFullName() : formIDstr;
+			if (formName == "Settler") {
+				formName = std::format("Settler {}", formIDstr);
+				}
+
+			LOG_info("Deserializing dialogue history for form ID {} : {} dialogue lines", formName, it.value());
 			std::vector<Hooks::DialogueLine> dialogueLines = it.value().get<std::vector<Hooks::DialogueLine>>();
-			logger::debug("{} pending lines", dialogueLines.size());
+			LOG_debug("{}: {} pending lines", formName, dialogueLines.size());
 			MDT::s_dialogueHistory.emplace(formID, std::move(dialogueLines));
 			}
 
 		if (j.contains("__DialogueTrackerState")) {
 			auto& state = j["__DialogueTrackerState"];
-			if (state.contains("preCache"))
-				MDT::s_preCache = state["preCache"].get<std::vector<Hooks::DialogueLine>>();
-
-			MDT::playerSeen = state.value("playerSeen", false);
-			MDT::NPCseen = state.value("NPCseen", false);
-			auto tmpActors = state.value("actorsInConversation", std::vector<RE::TESFormID>{});
-			MDT::actorsInConversation = { tmpActors.begin(), tmpActors.end() };
+			MDT::s_preCacheByQuest.clear();
+			if (state.contains("preCacheByQuest")) {
+				for (auto it = state["preCacheByQuest"].begin(); it != state["preCacheByQuest"].end(); ++it) {
+					Hooks::MantellaDialogueTracker::QuestPreCache qpc;
+					if (it->contains("lines"))
+						qpc.lines = it->at("lines").get<std::vector<Hooks::DialogueLine>>();
+					qpc.playerSeen = it->value("playerSeen", false);
+					qpc.NPCseen = it->value("NPCseen", false);
+					auto tmpActors = it->value("actorsInConversation", std::vector<RE::TESFormID>{});
+					qpc.actorsInConversation = { tmpActors.begin(), tmpActors.end() };
+					MDT::s_preCacheByQuest.emplace(it.key(), std::move(qpc));
+					}
+				}
 			}
 
 		return true;
 	} catch (const json::parse_error& e) {
-		logger::error("!!! Failed to parse dialogue history JSON: %s", e.what());
+		LOG_error("!!! Failed to parse dialogue history JSON: %s", e.what());
 		return false;
 	} catch (const std::exception& e) {
-		logger::error("!!! Exception during deserialization: %s", e.what());
+		LOG_error("!!! Exception during deserialization: %s", e.what());
 		return false;
 	}
 }
@@ -660,59 +918,61 @@ bool DeserializeDialogueHistoryFromJSON(const std::string& jsonString) {
 constexpr std::uint32_t kSerializationID = 'MTDL';
 
 void MySaveCallback(const F4SE::SerializationInterface* a_intfc) {
-	logger::info("MySaveCallback: Saving dialogue history to F4SE co-save...");
+	LOG_info("MySaveCallback: Saving dialogue history to F4SE co-save...");
 
 	try {
 		std::string jsonString = SerializeDialogueHistoryToJSON();
 		constexpr std::uint32_t recordType = 'HIST';
 		constexpr std::uint32_t version = 1;
 		if (!a_intfc->OpenRecord(recordType, version)) {
-			logger::error("!!! MySaveCallback: Failed to open 'HIST' record for serialization.");
+			LOG_error("!!! MySaveCallback: Failed to open 'HIST' record for serialization.");
 			return;
 		}
 		std::uint32_t jsonLength = static_cast<std::uint32_t>(jsonString.size());
 		if (!a_intfc->WriteRecordData(&jsonLength, sizeof(jsonLength))) {
-			logger::error("!!! MySaveCallback: Failed to write JSON string length.");
+			LOG_error("!!! MySaveCallback: Failed to write JSON string length.");
 			return;
 		}
 		if (!a_intfc->WriteRecordData(jsonString.c_str(), jsonLength)) {
-			logger::error("!!! MySaveCallback: Failed to write JSON string data.");
+			LOG_error("!!! MySaveCallback: Failed to write JSON string data.");
 			return;
 		}
-		logger::info("MySaveCallback: Serialized dialogue history to F4SE co-save.");
+		LOG_info("MySaveCallback: Serialized {}k dialogue history to F4SE co-save.", jsonLength / 1024);
 	} catch (const std::exception& e) {
-		logger::error(" !!! MySaveCallback: Exception during serialization: %s", e.what());
+		LOG_error(" !!! MySaveCallback: Exception during serialization: %s", e.what());
 	}
 
 }
 
 void MyLoadCallback(const F4SE::SerializationInterface* a_intfc) {
-	logger::info("MyLoadCallback: Loading dialogue history from F4SE co-save...");
+	LOG_info("MyLoadCallback: Loading dialogue history from F4SE co-save...");
+	Hooks::ShowSubtitle::InitDialogueFilterCsv();
 
 	try {
 		std::uint32_t type, version, length;
 		while (a_intfc->GetNextRecordInfo(type, version, length)) {
-			logger::info("MyLoadCallback: Found record type {:c}{:c}{:c}{:c}', version {}, length {}",
+			LOG_info("MyLoadCallback: Found record type {:c}{:c}{:c}{:c}', version {}, length {}",
 				(type & 0xFF), ((type >> 8) & 0xFF), ((type >> 16) & 0xFF), ((type >> 24) & 0xFF),
 				version, length);
 			if (type != 'HIST') continue;
 			std::uint32_t jsonLength = 0;
 			if (a_intfc->ReadRecordData(&jsonLength, sizeof(jsonLength)) != sizeof(jsonLength)) {
-				logger::error("!!! MyLoadCallback: Failed to read JSON string length.");
+				LOG_error("!!! MyLoadCallback: Failed to read JSON string length.");
 				continue;
 			}
 			std::string jsonString(jsonLength, '\0');
 			if (a_intfc->ReadRecordData(&jsonString[0], jsonLength) != jsonLength) {
-				logger::error("!!! MyLoadCallback: Failed to read JSON string data.");
+				LOG_error("!!! MyLoadCallback: Failed to read JSON string data.");
 				continue;
 			}
-			if (DeserializeDialogueHistoryFromJSON(jsonString))
-				logger::info("MyLoadCallback: Successfully loaded dialogue history from F4SE co-save.");
+		
+			if (DeserializeDialogueHistoryFromJSON(jsonString, a_intfc))
+				LOG_info("MyLoadCallback: Successfully loaded dialogue history from F4SE co-save.");
 			else
-				logger::error("!!! MyLoadCallback: Failed to deserialize dialogue history from JSON.");
+				LOG_error("!!! MyLoadCallback: Failed to deserialize dialogue history from JSON.");
 		}
 	} catch (const std::exception& e) {
-		logger::error("!!! MyLoadCallback: Exception during deserialization: {}", e.what());
+		LOG_error("!!! MyLoadCallback: Exception during deserialization: {}", e.what());
 	}
 
 }
@@ -721,13 +981,10 @@ void MyRevertCallback(const F4SE::SerializationInterface*) {
 	using MDT = Hooks::MantellaDialogueTracker;
 
 	MDT::s_dialogueHistory.clear();
-	MDT::s_preCache.clear();
-	MDT::playerSeen = false;
-	MDT::NPCseen = false;
-	MDT::actorsInConversation.clear();
+	MDT::s_preCacheByQuest.clear();
 	Hooks::ShowSubtitle::s_lastPlayerTopicText.clear();
 	MDT::lastCapturedGameTimeHours = 0.0f;
-	logger::info("MyRevertCallback: Cleared dialogue history.");
+	LOG_info("MyRevertCallback: Cleared dialogue history.");
 }
 #pragma endregion
 
@@ -739,12 +996,13 @@ void OnGameDataReadyVanilla() {
 		Hooks::SubtitleManagerShowSubtitleOrg, Hooks::ShowSubtitle::SubtitleManagerShowSubtitleHook);
 
 	MDT::Setup();
+	//Hooks::ShowSubtitle::InitDialogueFilterCsv();
 
-	logger::info("F4SEPluginLoad: Installed ShowSubtitle hook.");
+	LOG_info("F4SEPluginLoad: Installed ShowSubtitle hook.");
 
 	auto serialization = F4SE::GetSerializationInterface();
 	if (!serialization) {
-		logger::error("!!! OnF4SEMessage: Failed to get F4SE Serialization Interface.");
+		LOG_error("!!! OnF4SEMessage: Failed to get F4SE Serialization Interface.");
 		return;
 		}
 
@@ -755,13 +1013,20 @@ void OnGameDataReadyVanilla() {
 		serialization->SetRevertCallback(MyRevertCallback);
 		}
 	catch (const std::exception& e) {
-		logger::error("!!! OnF4SEMessage: Exception during F4SE Serialization callbacks: {}", e.what());
+		LOG_error("!!! OnF4SEMessage: Exception during F4SE Serialization callbacks: {}", e.what());
 		}
 
-	logger::info("OnF4SEMessage: Registered F4SE Serialization callbacks for dialogue history.");
+	LOG_info("OnF4SEMessage: Registered F4SE Serialization callbacks for dialogue history.");
 	}
 
 void OnPostLoadGameVanilla() {
+	}
+
+std::string GetVanillaDialogue(std::monostate) {
+	LOG_info("GetVanillaDialogue called, returning {} characters", Hooks::dialogueEventsBuffer.size());
+	std::string dialogueEvents = Hooks::dialogueEventsBuffer;
+	Hooks::dialogueEventsBuffer.clear();
+	return dialogueEvents;
 	}
 
 // Receive events from Mantella
@@ -774,19 +1039,19 @@ void VanillaProcessMantellaEvent(
 	using MDT = Hooks::MantellaDialogueTracker;
 
 	if (a_eventName == "MantellaConversation_Started") {
-		logger::info("Vanilla:Conversation Started");
+		//LOG_info("Vanilla:Conversation Started");
 		if (!Hooks::IsEnabled()) return;
 		MDT::OnConversationStarted();
 		}
 	else if (a_eventName == "MantellaConversation_NPC_Added") {
-		logger::info("Vanilla:NPC added");
+		//LOG_info("Vanilla:NPC added");
 		MDT::OnNewParticipant(target);
 		}
 	else if (a_eventName == "MantellaConversation_NPC_Removed") {
-		logger::debug("Vanilla:Actor left conversation");
+		//LOG_debug("Vanilla:Actor left conversation");
 		}
 	else if (a_eventName == "MantellaConversation_Ended") {
-		logger::info("Vanilla:Conversation Ended");
+		//LOG_info("Vanilla:Conversation Ended");
 		}
 	}
 

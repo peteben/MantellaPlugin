@@ -187,7 +187,7 @@ void SetOverrideFileName_internal(RE::TESTopicInfo* Info, char* name, uint64_t, 
 	using func_t = decltype(SetOverrideFileName_internal);
 	static REL::Relocation<func_t> func{ REL::VariantOffset(0x0621710, 0, 0x60C060) };	// Pre-NG, NG, VR
 
-	logger::info("Info: {:p} Name; {:p}", (void*)Info, (void*)name);
+	//logger::info("Info: {:p} Name; {:p}", (void*)Info, (void*)name);
 	func(Info, name, 0, 0);
 	}
 
@@ -200,7 +200,7 @@ void SetOverrideFileName(std::monostate, RE::TESTopic* this_p, std::string name)
 		CopyFuz(name);
 		}
 
-	logger::info("SetOverrideFileName Info: {:p} name: {}", (void*)this_p, name.data());
+	//logger::info("SetOverrideFileName Info: {:p} name: {}", (void*)this_p, name.data());
 	SetOverrideFileName_internal(tpInfo, name.data(), 0, 0);
 	}
 

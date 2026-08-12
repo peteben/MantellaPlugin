@@ -159,6 +159,9 @@ std::vector<HANDLE> LocateExistingMantellaProcesses() {
 
 /**
 * Launch Mantella.exe
+* This is explicitely called when the player requests a restart.
+* So, kill any existing instances of Mantella.exe and start a new one with the --integrated parameter.
+* 
 **/
 bool LaunchMantellaExe() {
     STARTUPINFO si = { 0 };
@@ -212,8 +215,7 @@ bool LaunchMantellaExe() {
     }
 
     // Start Mantella.exe
-    if (!CreateProcess(NULL, &commandLine[0], NULL, NULL, FALSE, CREATE_NEW_CONSOLE, NULL, moduleDir.c_str(), &si,
-        &pi)) {
+    if (!CreateProcess(NULL, &commandLine[0], NULL, NULL, FALSE, CREATE_NEW_CONSOLE, NULL, moduleDir.c_str(), &si, &pi)) {
         std::stringstream ss;
         ss << "Failed to launch Mantella.exe. CreateProcess error: " << GetLastError();
         RE::ConsoleLog::GetSingleton()->PrintLine(ss.str().c_str());
@@ -229,6 +231,29 @@ bool LaunchMantellaExe() {
     return true;
 };
 
+// Automatically launch Mantella.exe when the game data is ready, but only if there are no other running instances of it.
+// This allows us to avoid forcing the integrated Mantella.exe to spawn when players have already launched a standalone instance of it, which they might want to do for testing purposes or to use it with other games.
+
+void OnGameDataReadyLauncher() {
+	logger::info("OnGameDataReadyLauncher called");
+    //Get running instances of Mantella.exe here. In case there are any, we don't force spawn the integrated one.
+    std::vector<HANDLE> existingProcesses = LocateExistingMantellaProcesses();
+    if (existingProcesses.size() == 0) {
+        logger::info("Launching EXE");
+        // Attempt to launch Mantella.exe when the game data is loaded
+        if (LaunchMantellaExe()) {
+            RE::ConsoleLog::GetSingleton()->PrintLine("Mantella.exe launched successfully!");
+            }
+        else {
+            RE::ConsoleLog::GetSingleton()->PrintLine("Failed to launch Mantella.exe.");
+            }
+        }
+    else {
+        for (const HANDLE& i : existingProcesses) CloseHandle(i);//close the acquired handles, we will get new ones on a potential restart
+        RE::ConsoleLog::GetSingleton()->PrintLine("Found running instance of Mantella.exe. Not starting a new one. You can still restart it from the MCM.");
+        }
+ 
+    };
 
 
 bool LaunchMantellaExePapyrus(std::monostate) {

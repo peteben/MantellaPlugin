@@ -9,6 +9,7 @@ extern bool RegisterInfoPatcherFunctions(std::string moduleName, RE::BSScript::I
 extern bool RegisterHTTPFunctions(std::string moduleName, RE::BSScript::IVirtualMachine* a_VM);
 extern bool RegisterLauncherFunctions(std::string moduleName, RE::BSScript::IVirtualMachine* a_vm);
 extern void OnGameDataReadyVanilla();
+extern void OnGameDataReadyLauncher();
 extern void OnPostLoadGameVanilla();
 
 
@@ -37,11 +38,17 @@ void MessageHandler(F4SE::MessagingInterface::Message* a_msg) {
         case F4SE::MessagingInterface::kGameDataReady:
             logger::info("GameDataReady");
             initSettings();
+            OnGameDataReadyLauncher();
             OnGameDataReadyVanilla();
 			initDetours();
+            if (!REL::Module::IsVR()) {
+                RegisterCrosshair();
+                RE::PlayerCharacter::GetSingleton()->SetScale(1.0f);
+                }
             break;
         case F4SE::MessagingInterface::kPostLoadGame:
             OnPostLoadGameVanilla();
+			RE::PlayerCharacter::GetSingleton()->SetScale(1.0f);
             break;
         case F4SE::MessagingInterface::kNewGame:
             if (!REL::Module::IsVR()) {
@@ -51,6 +58,7 @@ void MessageHandler(F4SE::MessagingInterface::Message* a_msg) {
         }
     }
 
+extern std::string GetVanillaDialogue(std::monostate);
 
 bool Bind(RE::BSScript::IVirtualMachine* vm) {
     std::string className = "MantellaPlugin";
@@ -58,6 +66,7 @@ bool Bind(RE::BSScript::IVirtualMachine* vm) {
     RegisterInfoPatcherFunctions(className, vm);
     RegisterHTTPFunctions(className, vm);
     RegisterLauncherFunctions(className, vm);
+	vm->BindNativeMethod(className, "GetVanillaDialogue", GetVanillaDialogue, true);
     return true;
 };
 
