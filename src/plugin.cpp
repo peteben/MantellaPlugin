@@ -43,12 +43,12 @@ void MessageHandler(F4SE::MessagingInterface::Message* a_msg) {
 			initDetours();
             if (!REL::Module::IsVR()) {
                 RegisterCrosshair();
-                RE::PlayerCharacter::GetSingleton()->SetScale(1.0f);
+                //RE::PlayerCharacter::GetSingleton()->SetScale(1.0f);
                 }
             break;
         case F4SE::MessagingInterface::kPostLoadGame:
             OnPostLoadGameVanilla();
-			RE::PlayerCharacter::GetSingleton()->SetScale(1.0f);
+			//RE::PlayerCharacter::GetSingleton()->SetScale(1.0f);
             break;
         case F4SE::MessagingInterface::kNewGame:
             if (!REL::Module::IsVR()) {

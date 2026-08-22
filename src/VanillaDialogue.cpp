@@ -475,9 +475,7 @@ static inline std::string dialogueEventsBuffer;
 			s_csvPath = path / (std::string("DialogueFilter_") + timestamp + ".csv");
 			s_csvPath.make_preferred();
 
-			std::ofstream csv;
-			csv.open(s_csvPath, std::ios::out | std::ios::trunc);
-
+			std::ofstream csv(s_csvPath, std::ios::out | std::ios::trunc);
 			if (!csv.is_open()) {
 				std::error_code err;
 				LOG_error("DialogueFilter: {} : failed to create {}", err.message(),  s_csvPath.string());
